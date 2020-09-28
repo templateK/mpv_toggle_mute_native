@@ -8,6 +8,8 @@ import argparse
 import subprocess
 import re
 from enum import Enum
+from AppKit import NSWorkspace
+
 
 cdef connect(unix_socket):
     try:
@@ -51,27 +53,16 @@ cdef setup_args():
     # parser.add_argument('--command', '-c', type=str, choices=['toggle', 'mute', 'unmute'], default='toggle')
     return parser.parse_known_args()
 
+cdef mk_mpvsocket(pid):
+    return f'/Volumes/Ramdisk/mpvCache/mpvsocket{pid}'
 
-
-cdef mpv_status():
-    process = subprocess.Popen(["yabai", "-m", "query", "--windows", "--space", "3"], stdout=subprocess.PIPE)
-    result = process.communicate()[0]
-    decoded = result.decode('utf-8')
-    jsons = json.loads(decoded)
-    socket_file_path = "not found"
+cdef mpv_status_with_pyobjc():
     result = []
-    for item in jsons:
-        if item['app'] == 'mpv':
-            # witefile('[DEACTIVATED]:', item['title'])
-            socket_file_path = mk_mpvsocket(item['title'])
-            result.append({"path": socket_file_path, "focused": item['focused']})
+    for rapp in NSWorkspace.new().runningApplications():
+        if rapp.bundleIdentifier() == 'io.mpv':
+            socket_file_path = mk_mpvsocket(rapp.processIdentifier())
+            result.append({"path": socket_file_path, "focused": rapp.isActive()})
     return result
-
-cdef mk_mpvsocket(string):
-    streamer_account = next((x.group(0) for x in re.finditer(r"^\S+", string)), None)
-    if streamer_account:
-        return '/Volumes/Ramdisk/mpvCache/mpvsocket_' + streamer_account
-    return 'cannot parse mpv stream title'
 
 # def log(*msgs):
 #     with open("/Volumes/Ramdisk/tmp/subprocessex.log", 'a+') as f:
@@ -80,8 +71,7 @@ cdef mk_mpvsocket(string):
 #         f.write('\n')
 
 cdef mpv_main():
-    statuses = mpv_status()
-    for status in statuses:
+    for status in mpv_status_with_pyobjc():
         socket_path = status['path']
         focused = status['focused']
         # print(socket_path, state)
@@ -90,14 +80,14 @@ cdef mpv_main():
             if stat.S_ISSOCK(mode):
                 # print("ok")
                 client = connect(socket_path)
-                if focused == 0:
-                    # print("mute")
-                    toggle_mute(client, Commands.MUTE)
-                elif focused == 1:
+                if focused:
                     # print("unmute")
                     toggle_mute(client, Commands.UNMUTE)
                 else:
-                    toggle_mute(client, Commands.TOGGLE)
+                    # print("mute")
+                    toggle_mute(client, Commands.MUTE)
+                # else:
+                #     toggle_mute(client, Commands.TOGGLE)
             else:
                 print("not socket file: ", socket_path)
         else:
