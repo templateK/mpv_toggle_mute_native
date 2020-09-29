@@ -11,6 +11,7 @@ from enum import Enum
 from AppKit import NSWorkspace
 
 
+
 cdef connect(unix_socket):
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -70,28 +71,71 @@ cdef mpv_status_with_pyobjc():
 #             f.write(msg)
 #         f.write('\n')
 
-cdef mpv_main():
-    for status in mpv_status_with_pyobjc():
-        socket_path = status['path']
-        focused = status['focused']
-        # print(socket_path, state)
-        if not os.path.isfile(socket_path):
-            mode = os.stat(socket_path).st_mode
-            if stat.S_ISSOCK(mode):
-                # print("ok")
-                client = connect(socket_path)
-                if focused:
-                    # print("unmute")
-                    toggle_mute(client, Commands.UNMUTE)
-                else:
-                    # print("mute")
-                    toggle_mute(client, Commands.MUTE)
-                # else:
-                #     toggle_mute(client, Commands.TOGGLE)
+cdef mpv_main(active_socket_path):
+    cache_path = "/Volumes/Ramdisk/mpvCache"
+    for socket_file in os.listdir(cache_path):
+        if socket_file == "mpvsocket_server":
+            # print("skipping server socket")
+            continue
+        socket_path = f'{cache_path}/{socket_file}'
+        mode = os.stat(socket_path).st_mode
+        if stat.S_ISSOCK(mode):
+            # print("ok")
+            client = connect(socket_path)
+            if active_socket_path == socket_path:
+                # print(f'unmute: {socket_path}, active_socket_path was {active_socket_path}')
+                toggle_mute(client, Commands.UNMUTE)
             else:
-                print("not socket file: ", socket_path)
+                # print(f'mute: {socket_path}, active_socket_path was {active_socket_path}')
+                toggle_mute(client, Commands.MUTE)
+            client.close()
+            # else:
+            #     toggle_mute(client, Commands.TOGGLE)
         else:
-            print("file does not exists: ", socket_path)
+            print("not socket file: ", socket_path)
+
+
+cdef init_server():
+    server_address = '/Volumes/Ramdisk/mpvCache/mpvsocket_server'
+    # Make sure the socket does not already exist
+    try:
+        os.unlink(server_address)
+    except OSError:
+        if os.path.exists(server_address):
+            raise
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+    # Bind the socket to the port
+    print(sys.stderr, 'starting up on %s' % server_address)
+    sock.bind(server_address)
+
+    # Listen for incoming connections
+    sock.listen(0)
+    while True:
+        # Wait for a connection
+        # print(sys.stderr, 'waiting for a connection')
+        connection, client_address = sock.accept()
+        try:
+            # print(sys.stderr, 'connection from', client_address)
+            # Receive the data in small chunks and retransmit it
+            recv_data = bytearray()
+            while True:
+                data = connection.recv(8)
+                if data:
+                    recv_data += data
+                else:
+                    break
+            if recv_data:
+                socket_number = recv_data[:-1].decode('utf8')
+                socket_path = mk_mpvsocket(socket_number)
+                # print(sys.stderr, 'received', socket_path)
+                mpv_main(socket_path)
+        finally:
+            # Clean up the connection
+            connection.close()
+
 
 if __name__ == '__main__':
-    mpv_main()
+    init_server()
+    # mpv_main()
