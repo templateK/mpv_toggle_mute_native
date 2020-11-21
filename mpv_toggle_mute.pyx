@@ -6,15 +6,6 @@ import stat
 from enum import Enum
 
 
-cdef connect(unix_socket):
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(unix_socket)
-        return sock
-    except socket.error as msg:
-        print('connection fail', msg)
-        sys.exit(1)
-
 cdef send(dest_socket, command):
     dest_socket.sendall(command + b'\n')
     recv_msg = b''
@@ -46,20 +37,27 @@ cdef mpv_main(active_socket_path):
     cache_path = "/Volumes/Ramdisk/mpvCache"
     for socket_file in os.listdir(cache_path):
         if socket_file == "mpvsocket_server":
-            # print("skipping server socket")
+            print("skipping server socket")
             continue
         socket_path = f'{cache_path}/{socket_file}'
         mode = os.stat(socket_path).st_mode
         if stat.S_ISSOCK(mode):
             # print("ok")
-            client = connect(socket_path)
-            if active_socket_path == socket_path:
-                # print(f'unmute: {socket_path}, active_socket_path was {active_socket_path}')
-                toggle_mute(client, Commands.UNMUTE)
-            else:
-                # print(f'mute: {socket_path}, active_socket_path was {active_socket_path}')
-                toggle_mute(client, Commands.MUTE)
-            client.close()
+            try:
+                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                client.connect(socket_path)
+                if active_socket_path == socket_path:
+                    print(f'unmute: {socket_path}, active_socket_path was {active_socket_path}')
+                    toggle_mute(client, Commands.UNMUTE)
+                else:
+                    print(f'mute: {socket_path}, active_socket_path was {active_socket_path}')
+                    toggle_mute(client, Commands.MUTE)
+            except socket.error as msg:
+                print(f'Connection fail: {msg}')
+                print(f'Removing socket file: {socket_path}')
+                os.remove(socket_path)
+            finally:
+                client.close()
             # else:
             #     toggle_mute(client, Commands.TOGGLE)
         else:
@@ -85,10 +83,10 @@ cdef init_server():
     sock.listen(0)
     while True:
         # Wait for a connection
-        # print(sys.stderr, 'waiting for a connection')
-        connection, client_address = sock.accept()
         try:
-            # print(sys.stderr, 'connection from', client_address)
+            print(sys.stderr, 'waiting for a connection')
+            connection, client_address = sock.accept()
+            print(sys.stderr, 'connection from', client_address)
             # Receive the data in small chunks and retransmit it
             recv_data = bytearray()
             while True:
@@ -100,7 +98,7 @@ cdef init_server():
             if recv_data:
                 socket_number = recv_data[:-1].decode('utf8')
                 socket_path = mk_mpvsocket(socket_number)
-                # print(sys.stderr, 'received', socket_path)
+                print(sys.stderr, 'received', socket_path)
                 mpv_main(socket_path)
         finally:
             # Clean up the connection
