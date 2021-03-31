@@ -29,12 +29,14 @@ cdef toggle_mute(dest_socket, command):
         dest_socket.close()
 
 
+base_path = '/Volumes/MACFOO/temp'
+
 cdef mk_mpvsocket(pid):
-    return f'/Volumes/Ramdisk/mpvCache/mpvsocket{pid}'
+    return f'{base_path}/mpvCache/mpvsocket{pid}'
 
 
 cdef mpv_main(active_socket_path):
-    cache_path = "/Volumes/Ramdisk/mpvCache"
+    cache_path = f'{base_path}/mpvCache'
     for socket_file in os.listdir(cache_path):
         if socket_file == "mpvsocket_server":
             print("skipping server socket")
@@ -47,36 +49,41 @@ cdef mpv_main(active_socket_path):
                 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 client.connect(socket_path)
                 if active_socket_path == socket_path:
-                    print(f'unmute: {socket_path}, active_socket_path was {active_socket_path}')
+                    print(f'unmute: {socket_path}, active_socket_path was {active_socket_path}', file=sys.stdout)
                     toggle_mute(client, Commands.UNMUTE)
                 else:
-                    print(f'mute: {socket_path}, active_socket_path was {active_socket_path}')
+                    print(f'mute: {socket_path}, active_socket_path was {active_socket_path}', file=sys.stdout)
                     toggle_mute(client, Commands.MUTE)
             except socket.error as msg:
-                print(f'Connection fail: {msg}')
-                print(f'Removing socket file: {socket_path}')
+                print(f'MPV_TOGGLE_MUTE(E)| Connection fail: {msg}', file=sys.stderr)
+                print(f'MPV_TOGGLE_MUTE(I)| Removing socket file: {socket_path}', file=sys.stdout)
                 os.remove(socket_path)
             finally:
                 client.close()
             # else:
             #     toggle_mute(client, Commands.TOGGLE)
         else:
-            print("not socket file: ", socket_path)
+            print(f'MPV_TOGGLE_MUTE(W)| {socket_path} is not a socket file.',  file=sys.stderr)
 
 
 cdef init_server():
-    server_address = '/Volumes/Ramdisk/mpvCache/mpvsocket_server'
+    if not os.path.exists(base_path):
+        print(f'MPV_TOGGLE_MUTE(E)| Cache directory `{base_path}` doesn\'t exists. exiting program.', file=sys.stderr)
+        return
+
+    server_address = f'{base_path}/mpvCache/mpvsocket_server'
     # Make sure the socket does not already exist
     try:
         os.unlink(server_address)
     except OSError:
         if os.path.exists(server_address):
+            print(f'MPV_TOGGLE_MUTE(E)| Removing socket file `{server_address}` failed. exiting program.', file=sys.stderr)
             raise
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
     # Bind the socket to the port
-    print(sys.stderr, 'starting up on %s' % server_address)
+    print('starting up on %s' % server_address, file=sys.stdout)
     sock.bind(server_address)
 
     # Listen for incoming connections
@@ -84,9 +91,9 @@ cdef init_server():
     while True:
         # Wait for a connection
         try:
-            print(sys.stderr, 'waiting for a connection')
+            print('waiting for a connection', file=sys.stdout)
             connection, client_address = sock.accept()
-            print(sys.stderr, 'connection from', client_address)
+            print('connection from', client_address, file=sys.stdout)
             # Receive the data in small chunks and retransmit it
             recv_data = bytearray()
             while True:
@@ -98,7 +105,7 @@ cdef init_server():
             if recv_data:
                 socket_number = recv_data[:-1].decode('utf8')
                 socket_path = mk_mpvsocket(socket_number)
-                print(sys.stderr, 'received', socket_path)
+                print('received', socket_path, file=sys.stdout)
                 mpv_main(socket_path)
         finally:
             # Clean up the connection
